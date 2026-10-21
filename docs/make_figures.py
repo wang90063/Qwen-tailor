@@ -172,7 +172,121 @@ def roofline_summary():
     save(fig, "roofline_summary.png")
 
 
+# ------------------------------------------------------------------------------------------- 0. software stack (top of README)
+# Pure drawing, no numbers.  Chip = (title, files / note); the colour says who wrote it.
+DONE, REUSE, TODO = "done", "reuse", "todo"
+STYLE = {                       # face, edge, title colour, sub colour, linestyle
+    DONE: ("#c6f6d5", "#2f855a", "#1c4532", "#2f6f4f", "-"),
+    REUSE: ("#bee3f8", "#2b6cb0", "#1a365d", "#2c5282", "-"),
+    TODO: ("#f7fafc", "#a0aec0", "#5f6b7a", "#8591a3", (0, (4, 3))),
+}
+
+
+def architecture():
+    from matplotlib.patches import FancyBboxPatch, Rectangle
+    W, H = 12.0, 9.6
+    fig = plt.figure(figsize=(W, H))
+    ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off"); ax.grid(False)
+    X0, X1, GAP, CH, RG = 0.25, W - 0.25, 0.10, 0.70, 0.09       # margins / chip gap / chip height / row gap
+    BAND = 0.55                                                   # width of the vertical layer label
+
+    def box(x, y, w, h, fc, ec, ls="-", lw=1.2, r=0.06, z=1):
+        ax.add_patch(FancyBboxPatch((x + r, y + r), w - 2 * r, h - 2 * r, boxstyle=f"round,pad={r},rounding_size={r + .02}",
+                                    fc=fc, ec=ec, ls=ls, lw=lw, zorder=z))
+
+    def chip(x, y, w, kind, title, sub):
+        fc, ec, tc, sc, ls = STYLE[kind]
+        box(x, y, w, CH, fc, ec, ls, 1.2 if kind != TODO else 1.0, z=3)
+        head, _, desc = title.partition("\n")
+        ax.text(x + 0.09, y + CH - 0.075, head, ha="left", va="top", fontsize=9.6, fontweight="bold", color=tc, zorder=4)
+        if desc:
+            ax.text(x + 0.09, y + CH - 0.275, desc, ha="left", va="top", fontsize=8.4, color=tc, zorder=4, linespacing=1.15)
+        ax.text(x + 0.09, y + 0.07, sub, ha="left", va="bottom", fontsize=7.6, color=sc, zorder=4, linespacing=1.15)
+
+    def layer(top, name, en, rows, ncols=4, fc="#ffffff", ec="#4a5568", band="#2d3748"):
+        h = len(rows) * CH + (len(rows) - 1) * RG + 0.2
+        y0 = top - h
+        box(X0, y0, X1 - X0, h, fc, ec, lw=1.4, z=1)
+        ax.add_patch(Rectangle((X0 + 0.03, y0 + 0.03), BAND, h - 0.06, fc=band, ec="none", zorder=2))
+        ax.text(X0 + 0.03 + BAND / 2, y0 + h / 2, name, rotation=90, ha="center", va="center", fontsize=12, color="white", fontweight="bold", zorder=3)
+        ax.text(X0 + 0.03 + BAND / 2 + 0.17, y0 + h / 2, en, rotation=90, ha="center", va="center", fontsize=6.8, color="#cbd5e0", zorder=3)
+        cx0 = X0 + BAND + 0.18
+        cw = (X1 - 0.12 - cx0 - (ncols - 1) * GAP) / ncols
+        for r, row in enumerate(rows):
+            y = top - 0.1 - (r + 1) * CH - r * RG
+            for c, item in enumerate(row):
+                chip(cx0 + c * (cw + GAP), y, cw, *item)
+        return y0
+
+    ax.text(W / 2, H - 0.12, "Qwen-tailor 的软件栈：哪些是我们写的，哪些复用现成的，哪些没做", ha="center", va="top", fontsize=14.5, fontweight="bold")
+    # legend
+    lx, ly = W / 2 - 3.55, H - 0.62
+    for kind, label, w in ((DONE, "本仓库实现（文件名见小字）", 2.35), (REUSE, "复用 / 内嵌的现成组件", 2.2), (TODO, "没有实现", 1.35)):
+        fc, ec, _, _, ls = STYLE[kind]
+        box(lx, ly - 0.17, 0.36, 0.22, fc, ec, ls, 1.1, r=0.03)
+        ax.text(lx + 0.46, ly - 0.06, label, ha="left", va="center", fontsize=9.5)
+        lx += w + 0.35
+
+    top = H - 0.95
+    fw = layer(top, "框架", "FRAMEWORK", [
+        [(DONE, "函数式模型 + 静态缓存\n整步 mx.compile 的 decode", "model.py · engine.py · fast.py"),
+         (DONE, "prefill\n分块 · 末层只算末尾行", "prefill.py"),
+         (DONE, "可证明无损的\nint8 lm_head 预筛", "head_prune.py"),
+         (DONE, "无损 12 bit/权重压缩\n（权重字节 −25%）", "wcomp.py")],
+        [(DONE, "MTP 自推测解码\n草稿 → 批量校验 → 状态回滚", "spec.py · mtp.py"),
+         (DONE, "前缀缓存\nDeltaNet 状态的检查点树", "prefix_cache.py"),
+         (DONE, "连续批处理服务器\n+ 批量推测解码", "batch.py · batch_spec.py · serve.py"),
+         (DONE, "命令行\n聊天模板 · 多轮 REPL", "run.py")],
+        [(TODO, "采样", "temperature / top-p / top-k（只做了贪心）"),
+         (TODO, "HTTP / OpenAI 兼容接口", "调度器内核有，网络层没有"),
+         (TODO, "其它模型 · int4 · 分页 KV\n其它 Apple 芯片", "全部为 Qwen3.5-0.8B × M5 特化"),
+         (REUSE, "HF tokenizer\n权重文件读取", "transformers · mx.load")],
+    ])
+    top = fw - 0.12
+    cp = layer(top, "AI 编译器", "COMPILER", [
+        [(DONE, "图 IR\nembed … deltanet … head_argmax", "compiler.py · build_graph（9 种算子）"),
+         (DONE, "融合 pass\nnorm→linear · linear→+res · swiglu", "fuse：261 → 123 节点"),
+         (DONE, "权重布局 pass\ngate/up 交错 · 12 bit 编码", "layout"),
+         (DONE, "静态调度 lowering\n直线型 kernel 调用序列", "lower → 整体交给 mx.compile")],
+        [(TODO, "通用前端\n从 HF / ONNX 导入任意图", "只有手写的 Qwen3.5 图"),
+         (TODO, "自动 codegen / autotune", "tile 表来自离线调参脚本\n→ results/gemm_cfg.json"),
+         (TODO, "prefill 与 MTP 草稿路径\n没有走编译器", "仍是手写；整图 compile 对 prefill 无收益"),
+         (REUSE, "mx.compile\n惰性图捕获 · 逐元素融合", "MLX")],
+    ])
+    top = cp - 0.12
+    kn = layer(top, "Kernel", "KERNEL", [
+        [(DONE, "融合 GEMV 家族（decode）\n融合 norm · residual · SwiGLU · argmax", "kernels.py"),
+         (DONE, "DeltaNet 单 dispatch kernel（decode）\n卷积 + 归一化 + 门 + 递推 + 门控 norm", "kernels.py"),
+         (DONE, "分块 DeltaNet（NAX，prefill）\ntensor op 做块内矩阵乘 · 精确前代求逆", "gdn_nax.py"),
+         (DONE, "NAX GEMM（prefill）\n带 SwiGLU / ADD epilogue", "gemm_nax.py · results/gemm_cfg.json")],
+        [(DONE, "int8 预筛 K1–K4\n区间 → 候选 → 精确重算", "head_prune.py"),
+         (DONE, "12 bit 权重 SWAR 解码\n寄存器里还原精确 bf16", "wcomp.py · kernels.py"),
+         (DONE, "批处理 / 批推测 kernel\nragged 位置 · 快照池", "batch.py · batch_spec.py"),
+         (DONE, "int8 GEMM（W8A8，有损 opt-in）\n+ 逐元素胶水 kernel", "gemm_i8.py · prefill.py · mslib.py")],
+        [(REUSE, "DeltaNet 递推 kernel\n（内嵌，源自 mlx-lm）", "gated_delta.py · MIT"),
+         (REUSE, "NAX mainloop 头文件\n（内联，kernel 自带 epilogue）", "nax.py · 来自 MLX"),
+         (REUSE, "SDPA · rms_norm · rope · conv1d\n6 层 full-attention 用 MLX 的", "mx.fast.* · mx.conv1d"),
+         (TODO, "自写 attention / paged attention\nint4 · fp8 等其它 dtype 的 kernel", "attention 一律用 MLX 的 SDPA")],
+    ])
+    top = kn - 0.12
+    h = 0.78
+    box(X0, top - h, X1 - X0, h, STYLE[REUSE][0], STYLE[REUSE][1], lw=1.4, z=1)
+    ax.add_patch(Rectangle((X0 + 0.03, top - h + 0.03), BAND, h - 0.06, fc="#2a4365", ec="none", zorder=2))
+    ax.text(X0 + 0.03 + BAND / 2, top - h / 2, "MLX", rotation=90, ha="center", va="center", fontsize=12, color="white", fontweight="bold", zorder=3)
+    ax.text(X0 + BAND + 0.2, top - 0.1, "张量运行时与 Metal 后端（MLX）　全部复用，没有改动 MLX 的源码", ha="left", va="top", fontsize=10.2, fontweight="bold", color="#1a365d")
+    ax.text(X0 + BAND + 0.2, top - 0.4, "惰性计算图 · mx.compile · mx.fast.metal_kernel（运行时 JIT，不需要 Xcode）· 融合算子库 · 统一内存分配器 · Metal 命令缓冲提交",
+            ha="left", va="top", fontsize=8.8, color="#2c5282")
+    top = top - h - 0.1
+    h = 0.5
+    box(X0, top - h, X1 - X0, h, "#e2e8f0", "#4a5568", lw=1.4, z=1)
+    ax.text(W / 2, top - h / 2, "Apple M5　·　10 核 GPU + NAX 张量单元　·　16 GB 统一内存（标称 153 GB/s，实测流式读 106–124 GB/s）　·　bf16 GEMM ≈ 15 TFLOPS",
+            ha="center", va="center", fontsize=9.3, color="#2d3748", fontweight="bold")
+    fig.savefig(OUT / "architecture.png", dpi=150)
+    plt.close(fig)
+    print("wrote", OUT / "architecture.png")
+
+
 if __name__ == "__main__":
     print("walls (tok/s):", {k: round(v, 1) for k, v in WALL_TOK.items()})
     print("batch floor:", {B: round(batch_floor(B), 1) for B in (1, 2, 4, 6, 8, 12, 16)})
-    decode_progress(); prefill(); batching(); prefix_cache(); roofline_summary()
+    architecture(); decode_progress(); prefill(); batching(); prefix_cache(); roofline_summary()
