@@ -160,6 +160,8 @@ lower(graph, …)   静态调度：一串直线型的 kernel 调用，整体交�
 
 ![与 roofline 的距离](docs/figures/roofline_summary.png)
 
+*怎么读：三张图各用自己的屋顶（红色），柱子是实测，占比 = 实测 ÷ 屋顶，三张图之间的占比不能直接比。decode 图里有两堵墙：mlx-lm 读全部 bf16 权重，墙是 83 tok/s；本项目用无损字节削减把每 token 要读的字节从 1.504 GB 降到 1.003 GB，墙被搬到 124 tok/s，所以 109.7 tok/s 已经超过了旧墙，但只有新墙的 88%。把 mlx-lm 放到新墙上看是 58%，这才是两者真实的差距。批 decode 的 B=1（115）和左图的单序列 decode（109.7）来自不同的基准脚本（`bench/batch_step_bench.py` 与 `bench/decode.py`），不能直接互比。*
+
 | 场景 | 屋顶 | 达到 | 占比 |
 |---|---|---|---|
 | decode 无推测 | 带宽墙 (0.749 GB 压缩主干 + 0.254 GB int8 头) ÷ 124.5 GB/s ≈ 124 tok/s | 109.7 tok/s（≈110 GB/s 的权重流量） | **88%** |

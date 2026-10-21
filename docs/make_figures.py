@@ -150,25 +150,56 @@ def prefix_cache():
 
 # ------------------------------------------------------------------------------------------- 5. roofline summary
 def roofline_summary():
-    rows = [  # (label, fraction of wall, (lo, hi) or None, colour)
-        ("decode 无推测 109.7 / 124（墙：12 bit 主干 + int8 头）", 109.7 / WALL_TOK["+ 12 bit 主干"], None, BLUE),
-        ("mlx-lm 基线 71.4 / 83（墙：bf16 全部权重）", 71.4 / WALL_TOK["bf16 全部权重"], None, GREY),
-        ("prefill@2048 11.55k（无损地板 165–172 ms）", 0.5 * (165 / 177 + 172 / 177), (165 / 177, 172 / 177), BLUE),
-        ("prefill@2048 11.55k / bf16 GEMM 墙 13–15k", 11550 / 14000, (11550 / 15000, 11550 / 13000), BLUE),
-        ("批 decode B=1（内存地板）", 115 / batch_floor(1), None, GREEN),
-        ("批 decode B=4", 400 / batch_floor(4), None, GREEN),
-        ("批 decode B=8", 617 / batch_floor(8), None, GREEN),
-        ("批 decode B=16（ALU / launch 间隙受限）", 804 / batch_floor(16), None, GREEN),
-    ]
-    fig, a = plt.subplots(figsize=(9.6, 4.6))
-    ys = list(range(len(rows)))[::-1]
-    for y, (lab, f, rng, c) in zip(ys, rows):
-        a.barh(y, f * 100, color=c, alpha=.85)
-        a.text(max(f * 100, 100) + 1.5, y, f"{f * 100:.0f}%" + (f"（{rng[0] * 100:.0f}–{rng[1] * 100:.0f}%）" if rng else ""), va="center", fontsize=9)
-    a.set_yticks(ys); a.set_yticklabels([r[0] for r in rows], fontsize=9)
-    a.axvline(100, color="k", lw=1)
-    a.set_xlim(0, 118); a.set_xlabel("达到的屋顶百分比（%）"); a.grid(axis="y", alpha=0)
-    a.set_title("与 roofline 的距离")
+    """Three panels, absolute numbers, each with its own roof drawn on the axis.  (An earlier version put every scenario on one
+    percent axis, which mixed roofs of different kinds -- and made 'mlx-lm 86% vs ours 88%' look like a 2-point gain, because the
+    roof itself had been moved by the lossless byte reduction.)"""
+    fig, (a, b, c) = plt.subplots(1, 3, figsize=(15.5, 4.7), gridspec_kw={"width_ratios": [1, 1, 1.05]})
+    wall_old, wall_new = WALL_TOK["bf16 全部权重"], WALL_TOK["+ 12 bit 主干"]
+
+    def style(ax):
+        ax.grid(False); ax.set_yticks([0, 1]); ax.tick_params(axis="y", length=0)
+        ax.set_ylim(-0.8, 2.05)
+
+    def bar_label(ax, y, x1, value, pct):
+        ax.text(x1 * .5, y, value, ha="center", va="center", color="white", fontsize=10.5, fontweight="bold")
+        ax.text(ax.get_xlim()[1] * .015, y - .47, pct, ha="left", va="center", fontsize=9, color="#2d3748", linespacing=1.3,
+                bbox=dict(fc="white", ec="none", alpha=.92, pad=1.2), zorder=5)
+
+    # --- decode
+    style(a); a.set_xlim(0, 168); a.set_xlabel("tok/s"); a.set_title("decode（单序列，贪心）")
+    a.barh([0, 1], [71.4, 109.7], height=.62, color=[GREY, BLUE])
+    a.set_yticklabels(["mlx-lm 基线", "本项目\n（无推测）"], fontsize=10)
+    a.axvline(wall_old, color=RED, ls=":", lw=1.6); a.axvline(wall_new, color=RED, ls="--", lw=1.6)
+    a.text(wall_old - 1.5, 1.72, f"旧的墙 {wall_old:.0f}\n每 token 读全部 bf16 权重", color=RED, ha="right", va="center", fontsize=8.6)
+    a.text(wall_new + 1.5, 1.72, f"现在的墙 {wall_new:.0f}\n无损削减字节后", color=RED, ha="left", va="center", fontsize=8.6)
+    bar_label(a, 0, 71.4, "71.4 tok/s", f"= 旧墙的 {71.4 / wall_old * 100:.0f}%\n= 现墙的 {71.4 / wall_new * 100:.0f}%")
+    bar_label(a, 1, 109.7, "109.7 tok/s", f"= 旧墙的 {109.7 / wall_old * 100:.0f}%（已越过）\n= 现墙的 {109.7 / wall_new * 100:.0f}%")
+
+    # --- prefill
+    style(b); b.set_xlim(0, 19.8); b.set_xlabel("k tok/s"); b.set_title("prefill（2048 token）")
+    floor_lo, floor_hi = 2048 / .172 / 1e3, 2048 / .165 / 1e3           # 无损地板 165-172 ms -> k tok/s
+    b.barh([0, 1], [6.8, 11.55], height=.62, color=[GREY, BLUE])
+    b.set_yticklabels(["mlx-lm 基线", "本项目"], fontsize=10)
+    b.axvspan(floor_lo, floor_hi, color=RED, alpha=.35, lw=0)
+    b.axvspan(13, 15, color=RED, alpha=.12, lw=0)
+    b.text(floor_lo - .25, 1.72, "无损地板\n165–172 ms", color=RED, ha="right", va="center", fontsize=8.6)
+    b.text(15.25, 1.72, "bf16 GEMM\n算力墙 13–15k", color=RED, ha="left", va="center", fontsize=8.6)
+    bar_label(b, 0, 6.8, "6.8k tok/s", f"= 地板的 {6.8 / floor_hi * 100:.0f}–{6.8 / floor_lo * 100:.0f}%")
+    bar_label(b, 1, 11.55, "11.55k tok/s", f"= 地板的 {11.55 / floor_hi * 100:.0f}–{11.55 / floor_lo * 100:.0f}%\n= GEMM 墙的 {11.55 / 15 * 100:.0f}–{11.55 / 13 * 100:.0f}%")
+
+    # --- batched decode
+    Bs, meas = [1, 4, 8, 16], [115, 400, 617, 804]
+    xs = range(len(Bs))
+    c.grid(False)
+    c.bar(xs, meas, width=.56, color=BLUE, label="实测聚合吞吐")
+    for x, B, m in zip(xs, Bs, meas):
+        fl = batch_floor(B)
+        c.hlines(fl, x - .36, x + .36, color=RED, lw=2.6, label="内存地板" if x == 0 else None)
+        c.text(x, max(fl, m) + 28, f"{m} / {fl:.0f}\n{m / fl * 100:.0f}%", ha="center", va="bottom", fontsize=9.3, fontweight="bold", color=BLUE, linespacing=1.3)
+    c.set_xticks(list(xs)); c.set_xticklabels([f"B = {B}" for B in Bs], fontsize=10)
+    c.set_ylim(0, 1380); c.set_ylabel("tok/s（所有序列合计）"); c.set_xlim(-.6, len(Bs) - .4)
+    c.set_title("连续批处理 decode（实测 / 内存地板，占比）"); c.legend(loc="upper left", fontsize=9, frameon=False)
+    fig.suptitle("与 roofline 的距离（红色是各场景自己的屋顶；占比 = 实测 ÷ 屋顶）", fontsize=12.5, fontweight="bold", y=1.02)
     save(fig, "roofline_summary.png")
 
 
