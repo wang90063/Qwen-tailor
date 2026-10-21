@@ -1,7 +1,7 @@
 # bench/ —— 基准、调参与实验脚本
 
 这里是开发过程中用到的全部脚本，`docs/PLAN.md` 里每个里程碑的数字都来自它们。每个脚本文件头的 docstring 写明了用途和参数，
-直接 `python bench/<名字>.py [参数]` 运行即可（需要先 `pip install -e .`，或在仓库根目录加 `PYTHONPATH=.`）。
+直接 `python bench/<名字>.py [参数]` 运行即可（需要先 `pip install -e ".[dev]"`——基线和对拍要用 mlx-lm——或在仓库根目录加 `PYTHONPATH=.`）。
 
 几点约定：
 

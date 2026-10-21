@@ -4,7 +4,8 @@ usage: python tests/run_all.py [name ...] [--list]     (names are substrings of 
 
 Each script prints its own report and exits non-zero on failure.  `spec.py` is report-only: on prompt 3 the speculative path
 may legitimately diverge from plain greedy at a bf16 exact tie (see docs/PLAN.md), so read its output rather than its exit code.
-Needs the weights in models/Qwen3.5-0.8B and the golden outputs in results/; the full run takes a few minutes on an M5."""
+Needs the weights in models/Qwen3.5-0.8B, the golden outputs in results/ and mlx-lm (pip install -e ".[dev]"); the full run takes a few
+minutes on an M5."""
 import os, subprocess, sys, time
 from pathlib import Path
 

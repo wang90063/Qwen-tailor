@@ -17,7 +17,7 @@ from pathlib import Path
 import mlx.core as mx
 import mlx.nn as nn
 
-from mlx_lm.models.gated_delta import gated_delta_update, normalize_qk
+from .gated_delta import gated_delta_update, normalize_qk
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = ROOT / "models" / "Qwen3.5-0.8B"

@@ -4,7 +4,7 @@ import os
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.models.gated_delta import gated_delta_update
+from .gated_delta import gated_delta_update
 
 from . import gdn_nax
 from . import gemm_nax as G
@@ -12,7 +12,7 @@ from . import gemm_i8 as I8
 from .mslib import BF16_MATH
 from .model import Cfg, _full_attn, _mlp, _write, pos_arr
 
-# DeltaNet prefill recurrence: "nax" = chunked two-phase tensor-op kernel (gdn_nax.py), "ref" = mlx-lm sequential kernel
+# DeltaNet prefill recurrence: "nax" = chunked two-phase tensor-op kernel (gdn_nax.py), "ref" = the packed sequential kernel vendored from mlx-lm (gated_delta.py)
 GDN_IMPL = os.environ.get("QWEN35_GDN", "nax")
 # precision flags of the nax kernel (comma separated subset of gdn_nax.FLAGS; empty = fastest "plain" tensor-op MMAs)
 GDN_FLAGS = frozenset(f for f in os.environ.get("QWEN35_GDN_FLAGS", "").split(",") if f)
@@ -256,7 +256,7 @@ def _linear_attn(cfg, L, x, conv_state, ssm_state, res=None):
         out, new_ssm = gdn_nax.gdn_chunked(q, k, v, proj, L["A_log"], L["dt_bias"], ssm_state, flags=GDN_FLAGS)
     else:
         q, k, v = conv_prep(proj, conv_state[0], L["conv_w"])
-        # mlx-lm's packed delta-rule kernel (4 lanes/row, 32 state elems/lane) is already ALU-bound
+        # the packed delta-rule kernel from mlx-lm (4 lanes/row, 32 state elems/lane) is already ALU-bound
         out, new_ssm = gated_delta_update(q[None], k[None], v[None], proj[:, 8208:][None], proj[:, 8192:8208][None],
                                           L["A_log"], L["dt_bias"], ssm_state)
     tail = proj[:, :6144]

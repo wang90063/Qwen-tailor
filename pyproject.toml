@@ -9,15 +9,18 @@ description = "Qwen3.5-0.8B on Apple M5: hand-written Metal kernels, a small gra
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
-# The kernels inline MLX's own NAX headers at runtime (qwen35/nax.py) and reuse mlx-lm's gated-delta code, so the
-# MLX / mlx-lm versions are pinned to what this repo was developed and tested against.
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
+# The kernels inline MLX's own NAX headers at runtime (qwen35/nax.py), so the MLX version is pinned to what this repo was
+# developed and tested against.  mlx-lm is not a runtime dependency (its gated-delta kernel is vendored in qwen35/gated_delta.py);
+# it is only the reference for the tests / benchmarks (golden outputs, bit-for-bit comparison, a corpus of real text).
 dependencies = [
     "mlx>=0.32.4,<0.33",
-    "mlx-lm>=0.32.2,<0.33",
     "numpy",
     "transformers>=5.7",
 ]
+
+[project.optional-dependencies]
+dev = ["mlx-lm>=0.32.2,<0.33"]
 
 [tool.setuptools]
 # Weights (models/), tuned tile tables and golden outputs (results/) are located relative to the checkout,

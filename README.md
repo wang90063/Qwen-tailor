@@ -34,7 +34,7 @@ prefill 是纯算力受限，两者的 roofline 都可以实测；同时它是 G
 |---|---|
 | 芯片 | Apple M5，10 核 GPU，16 GB 统一内存，标称内存带宽 153 GB/s |
 | 系统 | macOS 26.5.1，只装了 Command Line Tools（**没有 Xcode**：没有 `metal` 编译器，也没有 GPU 抓帧 / Instruments） |
-| 软件 | Python 3.12，mlx 0.32.4，mlx-lm 0.32.2，transformers 5.20.2（只用分词器） |
+| 软件 | Python 3.12，mlx 0.32.4，transformers 5.20.2（只用分词器）；mlx-lm 0.32.2 只作基线和测试参照，不是运行时依赖 |
 | 模型 | [Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B)，bf16；24 层 = 18 层 GatedDeltaNet（递推状态 fp32 `[16,128,128]`）+ 6 层全注意力（GQA，头维 256）；隐层 1024，词表 248320，输出头与 embedding 绑定；带 1 层 MTP 头 |
 | 基线 | 原样的 mlx-lm 0.32.2，贪心解码 |
 | 开发方式 | 所有 kernel 用 `mx.fast.metal_kernel` 在运行时 JIT 编译（没有 Xcode 也能写 Metal），NAX（Neural Accelerator）部分内联 MLX 自带的 NAX 头文件 |
@@ -246,7 +246,7 @@ prefill 的演进：6.96k →（M3：分块 DeltaNet NAX kernel + 自写 NAX GEM
 
 - **Apple M5**。prefill / 批处理的 kernel 依赖 M5 GPU 的 Neural Accelerator（Metal 4 tensor op），并内联 MLX 自带的 NAX 头文件。**只在 M5 上测试过**；其它芯片上代码没有做硬件检测，很可能在 kernel 编译处直接报错，或者给出没有验证过的结果。
 - macOS 26.x（开发和测试在 26.5.1）；Python ≥ 3.10（测试用的是 3.12）。
-- 依赖固定在开发时的版本区间：`mlx>=0.32.4,<0.33`、`mlx-lm>=0.32.2,<0.33`、`transformers>=5.7`、`numpy`。kernel 内联了 MLX 的头文件、复用了 mlx-lm 的 gated-delta 代码，换大版本很可能失效。
+- 运行时依赖固定在开发时的版本区间：`mlx>=0.32.4,<0.33`、`transformers>=5.7`、`numpy`。kernel 内联了 MLX 的头文件，换大版本很可能失效。mlx-lm 不是运行时依赖（它的 DeltaNet 递推 kernel 已裁剪后收进 [`qwen35/gated_delta.py`](qwen35/gated_delta.py)，许可见 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)）；只有 `tests/` 和 `bench/` 里的基线、逐比特对拍和语料会用到，装 `.[dev]` 即可。
 - 内存：开发机是 16 GB。权重加各种派生副本（压缩权重、int8 头、融合权重）约占 2.4 GiB。
 
 ### 安装
@@ -255,7 +255,8 @@ prefill 的演进：6.96k →（M3：分块 DeltaNet NAX kernel + 自写 NAX GEM
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e .            # 只跑 run.py / 服务器：不需要 mlx-lm
+pip install -e ".[dev]"     # 另外跑 tests/ 与 bench/ 需要 mlx-lm（基线与对拍参照）
 hf download Qwen/Qwen3.5-0.8B --local-dir models/Qwen3.5-0.8B
 ```
 
@@ -332,7 +333,7 @@ for r in reqs:
 | `QWEN35_HEAD_PRUNE` | `1` | 可证明无损的 int8 lm_head 预筛；`0` 回到读完整张 bf16 表 |
 | `QWEN35_WCOMP` | `1` | 主干权重的无损 12 bit 压缩；`0` 回到 bf16 权重 |
 | `QWEN35_DRAFT_Q8` | `1` | MTP 草稿头的 int8 词表子集 |
-| `QWEN35_GDN` / `QWEN35_GDN_FLAGS` | `nax` / 空 | prefill 的 DeltaNet 实现（`nax` 分块 kernel 或 `ref` 即 mlx-lm 的顺序 kernel）及其精度 flag |
+| `QWEN35_GDN` / `QWEN35_GDN_FLAGS` | `nax` / 空 | prefill 的 DeltaNet 实现（`nax` 分块 kernel 或 `ref` 即取自 mlx-lm 的顺序 kernel）及其精度 flag |
 | `QWEN35_GEMM` / `QWEN35_GEMM_OFF` | `nax` / 空 | prefill 投影用自写 NAX GEMM 还是 `mx.matmul`；或指定哪几个留在 `mx.matmul` |
 | `QWEN35_FUSE_ADD` / `QWEN35_PREPA` | `1` / `1` | prefill 的残差加融合、conv+qk-norm 与 DeltaNet 阶段 A 融合（`0` 为逐比特等价的未融合版本） |
 | `QWEN35_PREP` / `QWEN35_PREP_TB` | `v2` / `16` | conv_prep kernel 版本与 token 分块 |
@@ -376,10 +377,12 @@ qwen35/        核心实现
   compiler.py    小型图编译器
   fast.py        用融合 kernel 搭的 decode / verify 前向
   prefill.py gemm_nax.py gdn_nax.py gemm_i8.py nax.py mslib.py   prefill 路径与 NAX kernel
+  gated_delta.py             DeltaNet 递推 kernel（取自 mlx-lm 并裁剪，见 THIRD_PARTY_LICENSES.md）
   head_prune.py wcomp.py     无损 int8 头预筛；无损权重压缩
   prefix_cache.py            前缀缓存
   batch.py serve.py batch_spec.py   连续批处理、调度器、批量推测解码
 run.py         命令行入口
+THIRD_PARTY_LICENSES.md   取自 mlx-lm 的代码的许可
 tests/         正确性测试（run_all.py 一键运行）
 bench/         基准、调参和实验脚本，见 bench/README.md
 results/       运行时数据与参考输出：golden 贪心输出、调好的 tile 配置表、MTP 草稿头的词频表
@@ -400,7 +403,7 @@ models/        权重放这里（git 忽略）
 
 ## 致谢
 
-- [MLX](https://github.com/ml-explore/mlx) 与 [mlx-lm](https://github.com/ml-explore/mlx-lm)：本项目基于 MLX 的 Metal 后端，复用了 NAX mainloop 头文件，并以 mlx-lm 的输出作为 golden 基线。
+- [MLX](https://github.com/ml-explore/mlx) 与 [mlx-lm](https://github.com/ml-explore/mlx-lm)：本项目基于 MLX 的 Metal 后端，复用了 NAX mainloop 头文件；DeltaNet 递推 kernel 取自 mlx-lm（`qwen35/gated_delta.py`，MIT，见 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)），并以 mlx-lm 的输出作为 golden 基线。
 - [Qwen3.5](https://huggingface.co/Qwen/Qwen3.5-0.8B)：模型与权重，遵循其自身的 Apache-2.0 许可，不随本仓库分发。
 
 ## 许可
