@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen-tailor"
+version = "0.1.0"
+description = "Qwen3.5-0.8B on Apple M5: hand-written Metal kernels, a small graph compiler, MTP speculative decoding and a continuous-batching server (MLX)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+# The kernels inline MLX's own NAX headers at runtime (qwen35/nax.py) and reuse mlx-lm's gated-delta code, so the
+# MLX / mlx-lm versions are pinned to what this repo was developed and tested against.
+dependencies = [
+    "mlx>=0.32.4,<0.33",
+    "mlx-lm>=0.32.2,<0.33",
+    "numpy",
+    "transformers>=5.7",
+]
+
+[tool.setuptools]
+# Weights (models/), tuned tile tables and golden outputs (results/) are located relative to the checkout,
+# so install from a clone:  pip install -e .
+packages = ["qwen35"]

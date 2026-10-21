@@ -1,0 +1,16 @@
+# environments / weights
+.venv/
+models/
+*.safetensors
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# os / editors
+.DS_Store
+.idea/
+.vscode/
