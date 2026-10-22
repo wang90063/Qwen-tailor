@@ -274,14 +274,14 @@ def architecture():
          (REUSE, "HF tokenizer\n权重文件读取", "transformers · mx.load")],
     ])
     top = fw - 0.12
-    cp = layer(top, "AI 编译器", "COMPILER", [
+    cp = layer(top, "AI 编译器", "旁路原型", [
         [(DONE, "图 IR\nembed … deltanet … head_argmax", "compiler.py · build_graph（9 种算子）"),
          (DONE, "融合 pass\nnorm→linear · linear→+res · swiglu", "fuse：261 → 123 节点"),
          (DONE, "权重布局 pass\ngate/up 交错 · 12 bit 编码", "layout"),
          (DONE, "静态调度 lowering\n直线型 kernel 调用序列", "lower → 整体交给 mx.compile")],
         [(TODO, "通用前端\n从 HF / ONNX 导入任意图", "只有手写的 Qwen3.5 图"),
          (TODO, "自动 codegen / autotune", "tile 表来自离线调参脚本\n→ results/gemm_cfg.json"),
-         (TODO, "prefill 与 MTP 草稿路径\n没有走编译器", "仍是手写；整图 compile 对 prefill 无收益"),
+         (TODO, "接入 Engine / 服务器\n线上跑的是手写 fast.verify", "仅 bench / tests 使用；prefill 也手写"),
          (REUSE, "mx.compile\n惰性图捕获 · 逐元素融合", "MLX")],
     ])
     top = cp - 0.12
