@@ -144,18 +144,22 @@ lower(graph, …)   静态调度：一串直线型的 kernel 调用，整体交�
 
 ### 2.3 实验结果
 
+本节每张表和每张图下面都标了 **shape**（测量用的 prompt 长度、生成长度、批大小、上下文位置）。模型固定为 Qwen3.5-0.8B bf16，除非另注都是 B=1、贪心解码。不同表的 shape 不同，数字不能互相比较。
+
 #### 总览（同一台机器，基线是原样的 mlx-lm 0.32.2）
 
-| 指标 | mlx-lm 基线 | 本项目 |
-|---|---|---|
-| decode，无推测，贪心 | 71.4 tok/s | **109–110 tok/s**（逐 token 一致） |
-| decode，MTP 自推测（6 条 prompt 平均） | 71.4 tok/s | **224**（k=2）/ **235–240**（k=3）tok/s，单条最高 314 |
-| prefill，2048 token | 6.8k tok/s | **11.55k tok/s**（可选 W8A8，有损：14.6k） |
-| TTFT，512 token | 94 ms | **46 ms**（W8A8：39 ms） |
-| TTFT，命中 2048 token 前缀缓存 + 16 token 后缀 | 188 ms | **16 ms**（11.7×） |
-| 连续批处理，decode 聚合吞吐 | 109.7 tok/s（B=1，串行） | B=4 **400** / B=8 **617** / B=16 **804** tok/s |
-| 批量推测解码相对 plain 批 decode | — | B=1 **2.44×** … B=4 1.74× … B=8 1.21×（代码文本） |
-| 混合负载回放（79 请求）TTFT p50 / p95 | 串行 FCFS 16.5 s / 47.6 s | continuous batching **0.13 s / 0.72 s**（开前缀缓存 0.055 s / 0.38 s） |
+| 指标 | shape（模型固定为 Qwen3.5-0.8B bf16，均为 B=1 除非另注） | mlx-lm 基线 | 本项目 |
+|---|---|---|---|
+| decode，无推测，贪心 | 64 token 的 prompt，续写 128 token，prefill 不计；上下文短，KV 读取量很小 | 71.4 tok/s | **109–110 tok/s**（逐 token 一致） |
+| decode，MTP 自推测 | 6 条 prompt，生成 192 token，贪心；吞吐随文本类型变化 | 71.4 tok/s | **224**（k=2）/ **235–240**（k=3）tok/s，单条最高 314 |
+| prefill，2048 token | 单条 2048 token 的 prompt，一次 prefill | 6.8k tok/s | **11.55k tok/s**（可选 W8A8，有损：14.6k） |
+| TTFT，512 token | 单条 512 token 的 prompt | 94 ms | **46 ms**（W8A8：39 ms） |
+| TTFT，命中 2048 token 前缀缓存 + 16 token 后缀 | 2048 token 前缀已缓存，新增 16 token | 188 ms | **16 ms**（11.7×） |
+| 连续批处理，decode 聚合吞吐 | B 个序列同时 decode，每个序列的位置在 600–1200 之间随机（ragged，均值约 900），max_len 4096 | 109.7 tok/s（B=1，串行） | B=4 **400** / B=8 **617** / B=16 **804** tok/s |
+| 批量推测解码相对 plain 批 decode | 代码文本，100 token 的 prompt，生成 200–300，k=2，B 个并发请求（服务器级） | — | B=1 **2.44×** … B=4 1.74× … B=8 1.21× |
+| 混合负载回放（79 请求）TTFT p50 / p95 | `mixed` 场景：chat / rag / agent / long 四类混合，prompt 20–3000 token，共 43.7k prompt token、8.2k 生成 token，泊松到达加一次 6 请求突发，8 个 slot | 串行 FCFS 16.5 s / 47.6 s | continuous batching **0.13 s / 0.72 s**（开前缀缓存 0.055 s / 0.38 s） |
+
+**这些数字都只在上面的 shape 下成立。** 尤其是无推测 decode 的 109–110 tok/s 是短上下文（64）的数字：上下文变长后全注意力层要多读 KV（每 token 12 KiB，6 层），DeltaNet 的状态大小不随长度变；批 decode 的 804 tok/s 是位置 600–1200 的数字；MTP 的接受率取决于文本。每一行的基线都是在同一个 shape 下测的（连续批处理一行的基线是本项目 B=1 的串行），所以同行的比值有意义，但绝对值不能外推到别的上下文长度或负载。逐比特一致也只保证上下文 < 4096。
 
 #### 和 roofline 比
 
@@ -171,6 +175,8 @@ lower(graph, …)   静态调度：一串直线型的 kernel 调用，整体交�
 | prefill @2048 | bf16 GEMM 算力墙 13–15k tok/s | 11.55k tok/s | 77–89% |
 | 批 decode B=1 / 4 / 8 / 16 | 内存地板（权重 + 状态 + KV 的字节 ÷ 124.5 GB/s，见下） | 115 / 400 / 617 / 804 tok/s | 97% / 96% / 86% / **72%** |
 | MTP 自推测 | 没有固定的带宽墙，取决于每轮接受的 token 数（代码 / 事实类约 2.8 token/轮；故事类在 M4 时只有 111–134 tok/s） | 224–240 tok/s ≈ 无推测的 2.0–2.2× | — |
+
+*shape：各行沿用总览表的 shape——decode 无推测为 64 token 的 prompt（ctx 64）；prefill 为单条 2048 token；批 decode 为位置 600–1200、max_len 4096；MTP 为 6 条 prompt × 生成 192 token。地板的推算按 KV 位置 900（600–1200 的均值）计。*
 
 说明与口径：
 
@@ -193,9 +199,11 @@ lower(graph, …)   静态调度：一串直线型的 kernel 调用，整体交�
 | M5 | int8 lm_head 预筛（无损） | 1.249 GB | 96 | 120 GB/s |
 | M6 | 主干 12 bit 压缩（无损） | 1.003 GB | 109.7 | 110 GB/s |
 
+*shape：`bench/decode.py`，64 token 的 prompt，续写 128 token，prefill 不计，贪心，5 次取中位；各阶段是 PLAN 记录的同机前后对比，不保证是同一时刻的同一次运行。*
+
 读法：**无推测 decode 的 1.54× 加速里，约 1.50× 来自少读的字节**（1.504 → 1.003 GB），有效带宽几乎没变（107 → 110 GB/s）。框架重写本身（M1）收益约等于零，手写 kernel（M2）让带宽从 107 提到 118 GB/s 左右，而最大的两步都是「在保证结果逐比特不变的前提下少读数据」。随着字节变少，有效带宽反而降到 110 GB/s：每 token 固定的开销（DeltaNet 状态读写、KV、小 N GEMV 的启动延迟）不随权重缩小，离墙还剩 12%（9.1 ms 一步里约 1 ms），PLAN 记录的主要差距在小 N 的 down / out_proj（延迟受限）以及 DeltaNet 与全注意力的胶水算子。
 
-MTP 自推测在此之上再前进：k=2 / k=3 的 6 条 prompt 平均吞吐 M4 159 / 172 → M5 189.7 / 201.5 → M6 224.4 / 240.5 tok/s（M4 时每轮耗时 15–17 ms）。
+MTP 自推测在此之上再前进（shape：6 条 prompt，每条生成 192 token，贪心）：k=2 / k=3 的 6 条 prompt 平均吞吐 M4 159 / 172 → M5 189.7 / 201.5 → M6 224.4 / 240.5 tok/s（M4 时每轮耗时 15–17 ms）。
 
 #### prefill
 
@@ -207,15 +215,21 @@ MTP 自推测在此之上再前进：k=2 / k=3 的 6 条 prompt 平均吞吐 M4 
 | 512 | 5.5k tok/s（94 ms） | 11.1k tok/s（46.1–46.6 ms） | 13.2k tok/s（38.7 ms） |
 | 2048 | 6.8k tok/s | 11.55k tok/s（≈177 ms） | 14.6k tok/s（139.9 ms） |
 
+*shape：B=1，单条 prompt，一次 prefill（更长的 prompt 按 chunk 2048 分块）；括号里是对应的 prefill 耗时；128 token 的基线没有测。*
+
 prefill 的演进：6.96k →（M3：分块 DeltaNet NAX kernel + 自写 NAX GEMM + SwiGLU / 残差 epilogue 融合）11.0k →（M7：末层 tail 路径、conv_prep 与阶段 A 融合、首 token 走 int8 头）11.55k。GEMM 已在 NAX bf16 峰值（M=2048 约 15.2–15.6 TFLOPS，占总时间约 70%），无损的地板在 165–172 ms，12.5k 在 bf16 下够不到。W8A8 把 in_proj / qkv / gate_up 换成 int8（≈25 TOPS），代价是 logits 相对误差 1.6–3.4%（无损路径约 0.7%），所以是显式 opt-in。
 
 #### 前缀缓存、连续批处理、批量推测
 
 ![前缀缓存](docs/figures/prefix_cache.png)
 
+*shape（左图）：B=1；缓存里已有 2048 token 的前缀，横轴是新增的后缀长度 1 / 16 / 64 / 128 / 512 token；「无缓存」是把前缀加后缀整段重新 prefill。*
+
 整条 prompt 重复（首 token 也缓存）时 TTFT 只有 1.7 ms（@2048）。命中后的输出与「在检查点处分块的 prefill」逐比特一致；与整段一次 prefill 在 bf16 舍入层面不逐比特一致（MLX 的 SDPA 按 query 长度分档），首 token 一致，生成只在 bf16 近平局处可能分叉。
 
 ![连续批处理与批量推测](docs/figures/batching.png)
+
+*shape：B 个序列同时 decode，每个序列的位置在 600–1200 之间随机，max_len 4096（`bench/batch_step_bench.py 4096 1200`），安静采样取中位；和单序列 decode（ctx 64）的 shape 不同，B=1 的 115 与 109.7 不能直接互比。*
 
 | B | 1 | 2 | 4 | 6 | 8 | 12 | 16 |
 |---|---|---|---|---|---|---|---|
@@ -225,6 +239,8 @@ prefill 的演进：6.96k →（M3：分块 DeltaNet NAX kernel + 自写 NAX GEM
 | 达到的比例 | 97% | 98% | 96% | 88% | 86% | 79% | 72% |
 
 大 B 的 500 → 802 tok/s 来自一组全部与旧 kernel 逐比特一致的优化：拆分 norm、认证 int8 头的近似阶段改用 NAX 张量算子、按 B 查表的 GEMV 分块、K=1024 的输入保持 fp32、权重每线程只解码一次。批量推测解码（k=2，代码文本，服务器级，B 个并发请求）：
+
+*shape：服务器级（`bench/serve_spec_bench.py`），代码文本，100 token 的 prompt，每个请求生成 200–300 token，k=2，只统计 B 个请求都在 decode 的区间，3 次取中位。*
 
 | B | 1 | 2 | 3 | 4 | 6 | 8 |
 |---|---|---|---|---|---|---|
@@ -238,13 +254,14 @@ prefill 的演进：6.96k →（M3：分块 DeltaNet NAX kernel + 自写 NAX GEM
 
 下面是从开发记录（[`docs/PLAN.md`](docs/PLAN.md)）和对话里读出的几点，以及作者据此做的推测。主要的几条标了证据强度：**〔实验支持〕** 是开发记录里有对应的测量或对话；**〔假设〕** 是这次实验没有验证的判断。这是单模型、单机器、单次运行的结果（见 [6. 局限](#6-局限)），不是对「难度」的最终结论。
 
-一句话：**写出一个快的 kernel 不是最难的部分，难的是该给 agent 一套什么样的 harness**——也就是模型之外，围着它的目标、边界、功能清单、验收和测量。
+一句话：**写出一个快的 kernel 不是最难的部分，难的是该给 agent 一套什么样的 harness**——也就是模型之外，围着它的目标（含目标 shape）、边界、功能清单、验收和测量。
 
 ### 3.1 这次给了 agent 什么 harness
 
 | harness 的成分 | 这次给的 | 起了什么作用 | 缺口 |
 |---|---|---|---|
 | 目标 | 「给个很高的性能目标」「朝着 roofline」，加上实测的带宽 / 算力 / 基线数字 | 把方向变成能算的数：基线 71.4 tok/s 已在 bf16 墙的 86%，PLAN 据此判断「无推测 decode 只剩约 10% 空间」 | 墙不是常数。这个判断被 agent 自己的 M5 / M6 推翻了：墙从 82.8 搬到 99.7 再搬到 124 tok/s，初版目标「≥79」被 M5 就超额完成 |
+| 目标 shape | 模型的形状（层数、头数、维度、词表，写在 `Cfg` 里并被 kernel 特化）和负载的形状：decode 的上下文 64、prefill 512 / 2048、批大小 1–16、推测每轮 2–4 行、ragged 的 `mixed` 场景（79 个请求）。初版 PLAN 的 decode / prefill / TTFT 形状是 agent 定的，批大小和 ragged 场景是人要求加的 | 特化的前提：tile 配置按（层 GEMM, M）逐个调参（`results/gemm_cfg.json`），M 的分块按寄存器预算查表，所有数字都只在这些形状下成立 | 形状没有被当作 harness 的一部分事先写清楚，是随目标一条条加出来的；超出形状的行为只有部分被覆盖（比如逐比特一致只保证上下文 < 4096），换模型就是重来一遍 |
 | 实现边界 | 框架 / kernel / 编译器三层都可以改，不能「下载下来跑通」 | 允许了改权重格式、改 argmax 做法这类跨层改动（见 3.3） | 三层是人的切法。agent 在 PLAN 里自己多加了第四层「算法层」（推测解码、批处理、缓存）；最大的两步（int8 头预筛、12 bit 压缩）也很难说属于哪一层 |
 | 功能 | 人逐条提出：前缀缓存、连续批处理、ragged 场景、总内存上限与自动 slot 数、请求状态机、批量推测 | 决定了系统最后长什么样 | agent 起草的初版 PLAN 里的目标全是单序列指标（decode / prefill / TTFT）；「服务该有什么功能」这次全部来自人，没有看到 agent 自己提 |
 | 对照参考 | mlx-lm：golden 贪心 token、基线数字、现成的 DeltaNet kernel | 同时是**正确性 oracle**（17 个测试脚本，多数是逐比特对拍，端到端用 golden 贪心 token 做 teacher-forced 校验；「可证明无损」类优化只有在这个判据下才敢做）、**基线**、和 **kernel 来源**（自写的 DeltaNet 递推 kernel 都慢于 mlx-lm 的 packed kernel，最后直接内嵌了它） | 参考只能判「一致不一致」，判不了「该不该追」 |
