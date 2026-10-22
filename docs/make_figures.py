@@ -317,7 +317,88 @@ def architecture():
     print("wrote", OUT / "architecture.png")
 
 
+def conclusions():
+    """Schematic of the three questions in README section 1 and their answers (no measured data besides three bar lengths)."""
+    from matplotlib.patches import FancyBboxPatch, Rectangle, FancyArrowPatch
+    W, CARD, GAP_, M = 12.0, 2.05, 0.2, 0.15
+    H = 3 * CARD + 2 * GAP_ + 2 * M
+    fig = plt.figure(figsize=(W, H))
+    ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off"); ax.grid(False)
+
+    def box(x, y, w, h, fc, ec, lw=1.2, ls="-", r=0.09, z=2):
+        ax.add_patch(FancyBboxPatch((x + r, y + r), w - 2 * r, h - 2 * r, boxstyle=f"round,pad={r},rounding_size={r + .02}",
+                                    fc=fc, ec=ec, lw=lw, ls=ls, zorder=z))
+
+    def arrow(a, b, color=GREY, lw=1.4):
+        ax.add_patch(FancyArrowPatch(a, b, arrowstyle="-|>", mutation_scale=11, lw=lw, color=color, zorder=4, shrinkA=0, shrinkB=0))
+
+    def label(x, y, t, size=10, color="#2d3748", ha="center", weight="normal", **kw):
+        ax.text(x, y, t, ha=ha, va="center", fontsize=size, color=color, fontweight=weight, zorder=5, **kw)
+
+    cards = [(GREEN, "#f0fff4", "能逼近 roofline 吗？", "能", "1"),
+             (BLUE, "#ebf8ff", "难点在哪？", "判断：对 / 好 / 做什么", "2"),
+             (ORANGE, "#fffaf0", "未来的框架？", "两个假设", "3")]
+    ys = [M + (2 - i) * (CARD + GAP_) for i in range(3)]
+    for (c, bg, q, a, n), y in zip(cards, ys):
+        box(0.15, y, W - 0.3, CARD, "white", "#cbd5e0", lw=1.0, z=1)
+        ax.add_patch(Rectangle((0.15 + 0.09, y + 0.2), 3.35, CARD - 0.4, fc=bg, ec="none", zorder=2))
+        ax.add_patch(plt.Circle((0.62, y + CARD - 0.55), 0.2, fc=c, ec="none", zorder=3))
+        label(0.62, y + CARD - 0.55, n, 12, "white", weight="bold")
+        label(0.98, y + CARD - 0.55, q, 13, "#1a202c", ha="left", weight="bold")
+        label(0.45, y + 0.62, a, 17 if len(a) < 6 else 15.5, c, ha="left", weight="bold", linespacing=1.25)
+        arrow((3.72, y + CARD / 2), (4.12, y + CARD / 2), "#a0aec0")
+
+    # ---- 1: horizontal bars against the wall
+    y = ys[0]; x0 = 5.1; sc = 5.0 / 124.1
+    for i, (v, c, lab) in enumerate(((109.7, GREEN, "本项目"), (71.4, GREY, "mlx-lm"))):
+        by = y + 1.22 - i * 0.62
+        label(x0 - 0.12, by + 0.2, lab, 10.5, ha="right")
+        ax.add_patch(FancyBboxPatch((x0, by), v * sc, 0.4, boxstyle="round,pad=0,rounding_size=0.06", fc=c, ec="none", zorder=3))
+        label(x0 + v * sc - 0.12, by + 0.2, f"{v:g}", 11, "white", ha="right", weight="bold")
+    wx = x0 + 124.1 * sc
+    ax.plot([wx, wx], [y + 0.5, y + 1.8], "--", color=RED, lw=1.5, zorder=4)
+    label(wx + 0.1, y + 1.55, "roofline 墙 124", 10, RED, ha="left")
+    label(wx + 0.1, y + 0.62, "tok/s · decode · B=1", 9, GREY, ha="left")
+    label(wx + 0.1, y + 1.1, "本项目离墙 12%", 10, GREEN, ha="left", weight="bold")
+
+    # ---- 2: three judgements, then the layers iterate underneath
+    y = ys[1]
+    cols = [("对不对", ("不变量", "对照参考")), ("好不好", ("目标 + shape", "自建测量")), ("做什么", ("功能清单", "实现边界"))]
+    for j, (head, items) in enumerate(cols):
+        cx = 4.35 + j * 2.45
+        box(cx, y + 0.78, 2.3, CARD - 0.98, "#ebf8ff", BLUE, lw=1.4, z=2)
+        label(cx + 1.15, y + CARD - 0.4, head, 12, BLUE, weight="bold")
+        for k, it in enumerate(items):
+            label(cx + 1.15, y + 1.3 - k * 0.3, it, 10)
+    ax.text(4.35, y + 0.55, "▼ 在这之下，三层各自迭代", fontsize=9.5, color=GREY, va="center", zorder=5)
+    for i, (t_, fc_, ec_, ls_) in enumerate((("框架", "#c6f6d5", GREEN, "-"), ("kernel", "#c6f6d5", GREEN, "-"), ("编译器（旁路）", "#f7fafc", GREY, "--"))):
+        bx = 6.45 + i * 1.5 + (0.3 if i == 2 else 0)
+        box(bx, y + 0.22, 1.3 if i < 2 else 1.6, 0.34, fc_, ec_, lw=1.2, ls=ls_, r=0.05, z=3)
+        label(bx + (0.65 if i < 2 else 0.8), y + 0.39, t_, 9.5, ec_ if i != 2 else GREY, weight="bold" if i != 2 else "normal")
+
+    # ---- 3: branch tree + merged layers
+    y = ys[2]
+    label(4.3, y + CARD - 0.3, "3.2", 9, ORANGE, ha="left", weight="bold")
+    box(4.6, y + 1.17, 1.9, 0.5, "#feebc8", ORANGE, z=3)
+    label(5.55, y + 1.42, "主分支：功能类", 10)
+    for i, t in enumerate(("模型 A", "模型 B", "模型 C")):
+        bx = 4.3 + i * 1.02
+        box(bx, y + 0.25, 0.92, 0.42, "white", ORANGE, lw=1.0, r=0.05, z=3)
+        label(bx + 0.46, y + 0.46, t, 9.5)
+        arrow((5.55, y + 1.17), (bx + 0.46, y + 0.67), ORANGE, 1.1)
+    label(8.1, y + CARD - 0.3, "3.3", 9, ORANGE, ha="left", weight="bold")
+    box(8.1, y + 0.25, 3.55, 1.1, "#fffaf0", ORANGE, lw=1.7, z=2)
+    for i, t in enumerate(("框架", "编译器", "kernel")):
+        bx = 8.28 + i * 1.12
+        box(bx, y + 0.62, 1.0, 0.5, "white", ORANGE, lw=1.0, ls="--", r=0.05, z=3)
+        label(bx + 0.5, y + 0.87, t, 10)
+    label(9.875, y + 0.42, "可同时修改", 9.5, ORANGE)
+    fig.savefig(OUT / "conclusions.png", dpi=150, bbox_inches="tight", pad_inches=0.05)
+    plt.close(fig)
+    print("wrote", OUT / "conclusions.png")
+
+
 if __name__ == "__main__":
     print("walls (tok/s):", {k: round(v, 1) for k, v in WALL_TOK.items()})
     print("batch floor:", {B: round(batch_floor(B), 1) for B in (1, 2, 4, 6, 8, 12, 16)})
-    architecture(); decode_progress(); prefill(); batching(); prefix_cache(); roofline_summary()
+    architecture(); decode_progress(); prefill(); batching(); prefix_cache(); roofline_summary(); conclusions()
